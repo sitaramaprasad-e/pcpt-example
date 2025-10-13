@@ -1,0 +1,127 @@
+{
+  "ruleCategoryGroups": [
+    {
+      "id": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "name": "Data Quality Rules",
+      "description": "Covers rules that check data integrity, accuracy, completeness, and validity to ensure high-quality input for downstream processing."
+    },
+    {
+      "id": "c5d1a29e-8a6c-4b56-b6ec-5b918f0e44f2",
+      "name": "Business Logic Rules",
+      "description": "Defines rules that enforce domain-specific business operations, policies, and decision logic."
+    },
+    {
+      "id": "e1ad921b-0a10-4f44-8f77-f637a75be50b",
+      "name": "Analytics Rules",
+      "description": "Includes rules that support reporting, KPIs, trend analysis, and other analytical processing needs."
+    },
+    {
+      "id": "1f579c61-8ed4-4e43-a195-5e9d1117e17d",
+      "name": "Audit & Logging Rules",
+      "description": "Ensures traceability and accountability by enforcing logging, monitoring, and audit trail requirements."
+    },
+    {
+      "id": "9c02f83b-3a52-44a6-a2e3-3c5e89df0b29",
+      "name": "Referential Integrity Rules",
+      "description": "Ensures that references between datasets remain consistent and valid."
+    },
+    {
+      "id": "8fc0923b-6286-41c8-834a-fa50fa4ac3fd",
+      "name": "Functionality",
+      "description": "Describes the type of functionality.",
+      "archived": false
+    }
+  ],
+  "ruleCategories": [
+    {
+      "id": "ea34c9b1-5a85-4e3b-9114-d8df501d8f70",
+      "name": "Validation",
+      "categorizationGuidance": "Rules that ensure records meet required data constraints, such as date formats, non-null fields, or valid numerical ranges.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": [
+        "968a9210-3aa1-49c6-a136-1a29d65959c2"
+      ]
+    },
+    {
+      "id": "b3c188f4-57e9-42f7-bd64-39eb3c093f73",
+      "name": "Transformation",
+      "categorizationGuidance": "Rules that standardize, map, or convert raw input data into a canonical or expected format.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "c84f7dc1-2f68-4029-b67f-3b3fa28a6bd3",
+      "name": "Aggregation",
+      "categorizationGuidance": "Rules that summarize or aggregate data across multiple records, typically for analytics or reporting purposes.",
+      "groupId": "e1ad921b-0a10-4f44-8f77-f637a75be50b",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "8d39064d-4d1a-4b23-a518-963dcd236b12",
+      "name": "Audit",
+      "categorizationGuidance": "Rules that ensure auditability, such as logging of invalid records or tracking unhandled exceptions.",
+      "groupId": "1f579c61-8ed4-4e43-a195-5e9d1117e17d",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "086853ff-e386-4c9b-8400-7cab50236826",
+      "name": "Uniqueness",
+      "categorizationGuidance": "Rules that check that a record is unique i.e. there are no duplicates.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "1a625eac-27bd-4866-94cc-0a8909cfa5f7",
+      "name": "Core Logic",
+      "categorizationGuidance": "This is essential business logic.",
+      "groupId": "c5d1a29e-8a6c-4b56-b6ec-5b918f0e44f2",
+      "examplarRuleIds": [
+        "3785621b-2b33-4382-a0cb-00803c06d134"
+      ]
+    },
+    {
+      "id": "ed1f0f9d-26f6-4a64-8ee2-0aa5bb3d4731",
+      "name": "Filtering",
+      "categorizationGuidance": "Rules that restrict, select, or exclude records based on specific criteria.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "e33b7c9d-d07d-4cb7-8a28-b22a47aa7f23",
+      "name": "Integrity",
+      "categorizationGuidance": "Rules that ensure consistency, validity, and logical correctness of datasets.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "8fdd7f18-9f9f-4b7b-9c7c-19823982d2f1",
+      "name": "Cleanup",
+      "categorizationGuidance": "Rules that remove invalid, redundant, or obsolete data to maintain dataset hygiene.",
+      "groupId": "d4b8f1a7-b624-4d96-84e1-11842f56c122",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "d9decb45-23df-41f8-88bb-4b273cf0db2d",
+      "name": "Referential Integrity",
+      "categorizationGuidance": "Rules that ensure foreign keys and cross-table references remain consistent.",
+      "groupId": "9c02f83b-3a52-44a6-a2e3-3c5e89df0b29",
+      "examplarRuleIds": [
+        "e48128a5-fff9-4d66-9ee8-b36ee56ed78e"
+      ]
+    },
+    {
+      "id": "e44f5d41-fc7f-4177-8baf-0810080f42e7",
+      "name": "User Interface",
+      "categorizationGuidance": "A rule that exists purely to affect the user interface behavior.",
+      "groupId": "8fc0923b-6286-41c8-834a-fa50fa4ac3fd",
+      "examplarRuleIds": []
+    },
+    {
+      "id": "1767f4f2-d8ad-4f23-a0a0-f4f1ead8a5c3",
+      "name": "Workflow",
+      "categorizationGuidance": "A rule that exists purely to affect the path that a workflow takes.",
+      "groupId": "8fc0923b-6286-41c8-834a-fa50fa4ac3fd",
+      "examplarRuleIds": []
+    }
+  ]
+}
