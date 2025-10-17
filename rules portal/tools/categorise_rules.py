@@ -288,21 +288,61 @@ def ensure_paths() -> None:
     except Exception as e:
         raise RuntimeError(f"Failed to stage rule categories into {TMP_DIR}: {e}")
 
+# ----------------------------
+# Category filtering helpers
+# ----------------------------
+def _norm_team(val: Optional[str]) -> str:
+    return (val or "").strip().lower()
+
+def filter_categories_for_rule(rule: Dict[str, Any]) -> str:
+    """Create a filtered copy of rule_categories.json that includes only
+    categories with no team OR a team matching the rule's owner (team).
+    Returns the path to the filtered categories file under TMP_DIR.
+    """
+    categories_src = RULE_CATEGORIES_JSON
+    categories_dst = os.path.join(TMP_DIR, "rule_categories.filtered.json")
+
+    try:
+        data = load_json(categories_src)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read {categories_src}: {e}")
+
+    owner_team = _norm_team(rule.get("owner"))
+
+    # The file is expected to be an object with a "ruleCategories" array.
+    # We preserve all other keys as-is and only filter the array.
+    if isinstance(data, dict) and isinstance(data.get("ruleCategories"), list):
+        filtered = []
+        for cat in data["ruleCategories"]:
+            if not isinstance(cat, dict):
+                continue
+            team_val = _norm_team(cat.get("team"))
+            # keep when no team is specified or it's a match (case-insensitive)
+            if team_val == "" or team_val == owner_team:
+                filtered.append(cat)
+        # Replace with filtered list (even if empty — that's intentional)
+        data["ruleCategories"] = filtered
+    else:
+        # If structure is unexpected, do not filter to avoid masking data
+        pass
+
+    dump_json(categories_dst, data)
+    return categories_dst
+
 def is_missing_category(rule: Dict[str, Any]) -> bool:
     cat = rule.get("rule_category")
     return cat is None or (isinstance(cat, str) and cat.strip() == "")
 
-def run_pcpt_for_rule(dynamic_rule_file: str, index: int = None, total: int = None) -> Optional[Dict[str, Any]]:
+def run_pcpt_for_rule(dynamic_rule_file: str, categories_path: str, index: int = None, total: int = None) -> Optional[Dict[str, Any]]:
     """
     Calls:
     pcpt.sh run-custom-prompt \
-      --input-file .tmp/rule_categorization/rule_categories.json \
+      --input-file <filtered categories> \
       --input-file2 .tmp/rule_categorization/rule.json \
       --output docs existing_docs/business_rule.json \
       categorise-rule.templ
     Returns parsed JSON from the expected output file (expects selectedCategory).
     """
-    categories_tmp_path = os.path.join(TMP_DIR, "rule_categories.json")
     expected_output = build_output_path(index=index, total=total)
 
     # Remove the expected output (if any exists) to avoid reading stale results
@@ -323,7 +363,7 @@ def run_pcpt_for_rule(dynamic_rule_file: str, index: int = None, total: int = No
         "pcpt.sh",
         "run-custom-prompt",
         "--input-file",
-        categories_tmp_path,
+        categories_path,
         "--input-file2",
         dynamic_rule_file,
         "--output",
@@ -399,13 +439,15 @@ def main() -> None:
         # Write dynamic file
         dump_json(DYNAMIC_RULE_FILE, single_rule_payload)
 
+        # Build a categories file filtered by the rule's owner/team
+        categories_filtered_path = filter_categories_for_rule(rule)
+
         # Construct the command for logging purposes (matches run_pcpt_for_rule)
-        categories_tmp_path = os.path.join(TMP_DIR, "rule_categories.json")
         cmd_for_log = [
             "pcpt.sh",
             "run-custom-prompt",
             "--input-file",
-            categories_tmp_path,
+            categories_filtered_path,
             "--input-file2",
             DYNAMIC_RULE_FILE,
             "--output",
@@ -416,7 +458,7 @@ def main() -> None:
         cmd_for_log.extend([DYNAMIC_RULE_FILE, PROMPT_NAME])
 
         # Run pcpt.sh on that dynamic file
-        result = run_pcpt_for_rule(DYNAMIC_RULE_FILE, index=running_index, total=total_targets)
+        result = run_pcpt_for_rule(DYNAMIC_RULE_FILE, categories_filtered_path, index=running_index, total=total_targets)
         if not result or "selectedCategory" not in result:
             print(f"⚠️ No selectedCategory returned for rule '{rule.get('rule_name','(unnamed)')}'. Skipping.")
             skipped += 1

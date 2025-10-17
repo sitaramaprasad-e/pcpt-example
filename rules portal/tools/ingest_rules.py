@@ -30,10 +30,15 @@ PCPT_PREFIX  = "[PCPTLOG:]"
 # Robust markers that ignore exact chevron counts; match by phrase
 HEADER_BEGIN_RX = re.compile(r"HEADER\s+BEGIN")
 HEADER_END_RX   = re.compile(r"HEADER\s+END")
+# RESPONSE block markers for logs (case-insensitive)
+RESP_BEGIN_RX = re.compile(r"RESPONSE\s+BEGIN", re.IGNORECASE)
+RESP_END_RX   = re.compile(r"RESPONSE\s+END", re.IGNORECASE)
 KV_LINE = re.compile(rf"^{re.escape(PCPT_PREFIX)}\s+(?P<k>[a-zA-Z0-9_]+)=(?P<v>.*)$")
 SOURCE_JSON = f"{MODEL_HOME}/.model/sources.json"
 RUNS_JSON   = f"{MODEL_HOME}/.model/runs.json"
 MIN_BUILD_NUM = 2510020935  # ignore headers from builds before this
+TEAMS_JSON = f"{MODEL_HOME}/.model/teams.json"
+COMPONENTS_JSON = f"{MODEL_HOME}/.model/components.json"
 
 # Log parsing patterns
 RE_OUTPUT_REPORT = re.compile(r"^\s*Output report:\s*(?P<path>.+)\s*$", re.IGNORECASE)
@@ -45,10 +50,15 @@ RE_OUTPUT_GENERIC = re.compile(r"^\s*(Output|Wrote|Saved):\s*(?P<path>.+)\s*$", 
 
 # Accept input file path from command line argument
 if len(sys.argv) < 2:
-    print("Usage: python ingest_rules.py <input_file>")
+    print("Usage: python ingest_rules.py <input_file> [--force | --force-load]")
     sys.exit(1)
 
 input_file = sys.argv[1]
+
+# Optional switch to force load (even if same name + timestamp already exists)
+FORCE_LOAD = any(arg in ("--force", "--force-load") for arg in sys.argv[2:])
+if FORCE_LOAD:
+    print("⚠️  Force-load enabled: rules will be ingested even if (rule_name, timestamp) already exists.")
 
 file_mtime = os.path.getmtime(input_file)
 file_timestamp = datetime.utcfromtimestamp(file_mtime).replace(microsecond=0).isoformat() + "Z"
@@ -69,12 +79,51 @@ def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+# Helper: prompt with default value
+def _prompt_with_default(prompt_text: str, default_val: str) -> str:
+    try:
+        entered = input(f"{prompt_text} (default='{default_val}'): ").strip()
+    except EOFError:
+        entered = ""
+    return entered if entered else default_val
+
+
 def _save_json_file(path: str, data) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
+
+# Helper: append a unique non-empty string to a JSON list file
+def _append_unique_value(list_path: str, value: str) -> None:
+    """Append a non-empty string `value` to a JSON list file at `list_path` if not already present.
+    Creates the file with an empty list if it doesn't exist. If the file is corrupted or not a list,
+    it will be replaced with a list containing unique string entries.
+    """
+    val = (value or "").strip()
+    if not val:
+        return
+    os.makedirs(os.path.dirname(list_path), exist_ok=True)
+    data = []
+    try:
+        if os.path.exists(list_path) and os.path.getsize(list_path) > 0:
+            with open(list_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                data = [str(x) for x in loaded if isinstance(x, (str, int, float))]
+            else:
+                # best-effort: if it's a dict with a single list value, use that list
+                for v in loaded.values():
+                    if isinstance(v, list):
+                        data = [str(x) for x in v if isinstance(x, (str, int, float))]
+                        break
+    except Exception:
+        data = []
+    if val not in data:
+        data.append(val)
+    with open(list_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 # ===== PCPT Header parsing helpers for model/sources.json & model/runs.json (new) =====
 def _coerce_header_value(v: str):
@@ -89,6 +138,19 @@ def _coerce_header_value(v: str):
         return s[1:-1]
     return s
 
+# Text normalizer for tolerant comparisons
+def _normalize_text(s: str) -> str:
+    """Normalize text for tolerant comparisons: normalize newlines, strip trailing spaces, collapse multiple blank lines."""
+    if s is None:
+        return ""
+    # Normalize newlines
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # Strip trailing spaces on each line
+    s = "\n".join([ln.rstrip() for ln in s.split("\n")])
+    # Collapse 3+ blank lines to 2
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
 def _parse_pcpt_header_block(lines):
     data = {}
     for line in lines:
@@ -99,24 +161,46 @@ def _parse_pcpt_header_block(lines):
         data[k] = _coerce_header_value(v)
     return data
 
-def _iter_pcpt_header_blocks(text: str):
+def _iter_pcpt_runs(text: str):
+    """Yield dicts that merge header key/values and include `response_text` captured between
+    'RESPONSE BEGIN' and 'RESPONSE END' that follow the header block in the same file."""
     lines = text.splitlines()
     i = 0
-    while i < len(lines):
-        # Look for a BEGIN line that contains the phrase
+    n = len(lines)
+    while i < n:
         if HEADER_BEGIN_RX.search(lines[i]):
             i += 1
-            block = []
-            # Collect until END phrase
-            while i < len(lines) and not HEADER_END_RX.search(lines[i]):
+            header_block = []
+            while i < n and not HEADER_END_RX.search(lines[i]):
                 if lines[i].strip():
-                    block.append(lines[i])
+                    header_block.append(lines[i])
                 i += 1
-            # Skip the END line if present
-            if i < len(lines) and HEADER_END_RX.search(lines[i]):
+            # Skip HEADER END
+            if i < n and HEADER_END_RX.search(lines[i]):
                 i += 1
-            if block:
-                yield _parse_pcpt_header_block(block)
+            header = _parse_pcpt_header_block(header_block)
+            # Now attempt to find the next RESPONSE block after this header
+            response_text = ""
+            # Scan forward to next RESPONSE BEGIN
+            while i < n and not RESP_BEGIN_RX.search(lines[i]):
+                # Stop if we encounter another HEADER BEGIN before a response (some logs may omit)
+                if HEADER_BEGIN_RX.search(lines[i]):
+                    break
+                i += 1
+            if i < n and RESP_BEGIN_RX.search(lines[i]):
+                i += 1
+                resp_lines = []
+                while i < n and not RESP_END_RX.search(lines[i]):
+                    resp_lines.append(lines[i])
+                    i += 1
+                # Skip RESP END
+                if i < n and RESP_END_RX.search(lines[i]):
+                    i += 1
+                response_text = "\n".join(resp_lines)
+            # Yield a combined record
+            rec = dict(header)
+            rec["response_text"] = response_text
+            yield rec
             continue
         i += 1
 
@@ -129,32 +213,31 @@ def _build_sources_and_runs_from_logs(log_paths):
                 text = f.read()
         except Exception:
             continue
-        for hdr in _iter_pcpt_header_blocks(text):
+        for rec in _iter_pcpt_runs(text):
             # Skip headers from older builds, and skip if build is unknown
-            build_raw = hdr.get("build")
+            build_raw = rec.get("build")
             build_num = None
             if build_raw is not None:
                 try:
                     build_num = int(str(build_raw).strip())
                 except Exception:
                     build_num = None
-            # Now ignore if unknown or below threshold
             if build_num is None or build_num < MIN_BUILD_NUM:
                 continue
-            root_dir = hdr.get("root_dir")
-            source_path = hdr.get("source_path")
-            output_path = hdr.get("output_path")
-            input_files = hdr.get("input_files") or []
-            output_file = hdr.get("output_file")
-            prompt = hdr.get("prompt") or hdr.get("prompt_template")
+            root_dir = rec.get("root_dir")
+            source_path = rec.get("source_path")
+            output_path = rec.get("output_path")
+            input_files = rec.get("input_files") or []
+            output_file = rec.get("output_file")
+            prompt = rec.get("prompt") or rec.get("prompt_template")
             if root_dir and source_path:
                 sources.setdefault(root_dir, set()).add(str(source_path))
             runs.append({
-                "timestamp": hdr.get("timestamp"),
-                "build": hdr.get("build"),
-                "mode": hdr.get("mode"),
-                "provider": hdr.get("provider"),
-                "model": hdr.get("model"),
+                "timestamp": rec.get("timestamp"),
+                "build": rec.get("build"),
+                "mode": rec.get("mode"),
+                "provider": rec.get("provider"),
+                "model": rec.get("model"),
                 "prompt": prompt,
                 "source_path": source_path,
                 "output_path": output_path,
@@ -162,6 +245,7 @@ def _build_sources_and_runs_from_logs(log_paths):
                 "output_file": output_file,
                 "root_dir": root_dir,
                 "log_file": str(log_path),
+                "response_text": rec.get("response_text") or ""
             })
     sources_out = [
         {"root_dir": rd, "source_paths": sorted(list(paths))}
@@ -262,6 +346,14 @@ def write_model_sources_and_runs(rule_ids_for_output: Optional[List[str]] = None
         for p in logs[:15]:
             print(f"[DEBUG]  - {p}")
     sources_out, runs = _build_sources_and_runs_from_logs(logs)
+    # Prepare normalized text of the current output document (if provided)
+    doc_norm = ""
+    if output_file_path and os.path.exists(output_file_path):
+        try:
+            with open(output_file_path, "r", encoding="utf-8", errors="ignore") as df:
+                doc_norm = _normalize_text(df.read())
+        except Exception:
+            doc_norm = ""
     # Preserve previously stored rule_ids from existing runs.json before we add new links
     try:
         _existing_runs = []
@@ -295,20 +387,25 @@ def write_model_sources_and_runs(rule_ids_for_output: Optional[List[str]] = None
         except Exception:
             ids_list = None
         if ids_list:
-            # Collect all runs that match this output file
             matched_idxs = []
-            for idx, rec in enumerate(runs):
-                if _matches_output_file(rec, output_file_path):
-                    matched_idxs.append(idx)
+            # 1) Prefer content-based match: response contains full document text
+            if doc_norm:
+                for idx, rec in enumerate(runs):
+                    resp = _normalize_text(rec.get("response_text") or "")
+                    if resp and doc_norm and doc_norm in resp:
+                        matched_idxs.append(idx)
+            # 2) Fallback: path-based match (legacy)
+            if not matched_idxs:
+                for idx, rec in enumerate(runs):
+                    if _matches_output_file(rec, output_file_path):
+                        matched_idxs.append(idx)
             if matched_idxs:
-                # Find most recent by timestamp (ISO8601). If parse fails, prefer later index (assumed newer).
+                # Pick the most recent by timestamp
                 def _parse_ts(ts: str):
                     try:
-                        # Support 'YYYY-MM-DDTHH:MM:SSZ' and similar without timezone
                         t = str(ts or "").strip()
                         if not t:
                             return None
-                        # Remove trailing 'Z' for fromisoformat
                         if t.endswith('Z'):
                             t = t[:-1]
                         return datetime.fromisoformat(t)
@@ -323,12 +420,9 @@ def write_model_sources_and_runs(rule_ids_for_output: Optional[List[str]] = None
                     elif dt is not None and newest_dt is not None and dt > newest_dt:
                         newest_idx, newest_dt = idx, dt
                     elif dt is None and newest_dt is None and idx > newest_idx:
-                        # Fallback: later occurrence considered newer
                         newest_idx = idx
-                # Do NOT remove rule_ids from older runs. Only add to the most recent run.
                 existing = runs[newest_idx].get("rule_ids") or []
                 try:
-                    # Preserve order: existing first, then new ones that aren't already present
                     combined = list(existing) + [rid for rid in ids_list if rid not in set(existing)]
                 except Exception:
                     combined = ids_list
@@ -396,15 +490,33 @@ text = re.sub(r"#{2,6}\s*\d+\.\s*Rule Name:\s*", "## ", text)            # e.g.,
 text = re.sub(r"#{2,6}\s*Rule Name:\s*", "## ", text)                    # e.g., "### Rule Name:"
 text = re.sub(r"\n---+\n", "\n", text)                                   # Remove separators
 
+# Also handle non-heading "Rule Name" lines (e.g., "**Rule Name:** <name>" or "Rule Name: <name>")
+text = re.sub(r"(?m)^\s*\*\*Rule Name:\*\*\s*", "## ", text)        # "**Rule Name:** ..." -> "## ..."
+text = re.sub(r"(?m)^\s*Rule Name:\s*", "## ", text)                # "Rule Name: ..."    -> "## ..."
+
+# Defaults for team/owner and component must be empty strings (per requirement)
+default_owner = ""
+default_component = ""
+
+# Prompt for values (requirement: prompt for team and component)
+# Note: We map 'team' input to the existing 'owner' attribute to remain schema-compatible.
+_ingest_owner = _prompt_with_default("Enter team/owner to set on all rules", default_owner)
+_ingest_component = _prompt_with_default("Enter component to set on all rules", default_component)
+# Update registries: add team/component if not already present (skip empty)
+_append_unique_value(TEAMS_JSON, _ingest_owner)
+_append_unique_value(COMPONENTS_JSON, _ingest_component)
+
 # Split into rule sections
 rule_sections = re.split(r"(?m)^\s{0,3}#{1,6}\s+", text.strip())[1:]
 
 updated_count = 0
 new_count = 0
+considered_count = 0
 
 new_rules = []
 
 for section in rule_sections:
+    considered_count += 1
     try:
         lines = section.strip().splitlines()
         # Prefer the section heading itself as the rule name.
@@ -521,17 +633,20 @@ for section in rule_sections:
 
         # Skip if rule with same name and timestamp already exists in seen
         k = _dedupe_key(rule_name, file_timestamp)
-        if k in seen:
+        if k in seen and not FORCE_LOAD:
             continue
 
         existing = existing_by_name.get(rule_name)
         if existing:
             old_ts = existing.get("timestamp")
-            if old_ts and old_ts >= file_timestamp:
-                continue  # Skip older or same
-            rule_id = existing.get("id")
+            # If not forcing, keep the old (newer-or-same) rule and skip updating.
+            if not FORCE_LOAD and old_ts and old_ts >= file_timestamp:
+                continue
+            # Otherwise, we will update/replace the existing record
+            rule_id = existing.get("id") or str(uuid.uuid4())
             updated_count += 1
         else:
+            # No existing record by this name -> new rule
             rule_id = str(uuid.uuid4())
             new_count += 1
 
@@ -585,7 +700,9 @@ for section in rule_sections:
             "dmn_outputs": dmn_outputs,
             "dmn_table": dmn_table,
             "timestamp": file_timestamp,
-            "id": rule_id
+            "id": rule_id,
+            "owner": _ingest_owner,
+            "component": _ingest_component,
         })
 
     except Exception as e:
@@ -603,7 +720,8 @@ with open(output_file, "w", encoding="utf-8") as out_file:
 
 print(
     f"Extracted {len(new_rules)} rules: {new_count} new, {updated_count} updated. "
-    f"Total rules now: {len(final_rules_list)}. Saved to {output_file}"
+    f"Total rules now: {len(final_rules_list)}. Saved to {output_file}. "
+    f"Considered {considered_count} rule section(s)."
 )
 
 # Build auxiliary model indices from PCPT headers and link this run to its rule IDs
