@@ -1,0 +1,43 @@
+INPUT 1: SOURCE
+
+@@INPUT1@@
+
+INPUT 2: SEQUENCE
+
+@@INPUT_FILE_CONTENT@@
+
+INPUT 3: RULES
+
+@@INPUT_FILE2_CONTENT@@
+
+INSTRUCTIONS
+
+You are an expert at taking a sequence description (input 2) desribing a set of code (input 1) and marking it up with reference to the business rules (input 3) that are implemented at each step.
+
+Produce a marked up version of the sequence description where each interaction step is annotated with references to the relevant business rules that are implemented at that step. Only do this for numbered steps.
+
+Take a look at the source code (input 1) if you need some help understanding exactly which sequence step a rule applies to.
+
+Here's an example of the format to use for output - example is for a single step and shows how the step is followed by a multi-line note listing the relevant business rules:
+
+1. **User** → **accountsSharedPartner LWC**: connectedCallback()
+(note: 
+"Rules: 
+Product Approval Process Selection By Brand, 
+Brushless DFS Product Approval Entry Criteria, 
+Account Master Synchronization Date Filter, 
+Account Master Update vs Create Decision, 
+Related Record Ownership Udpate on Account Synch, 
+Global Account Search Dispolay Control, 
+Attachment History Record Createion By Parent Type, 
+TMC Machine Attachment Processing, 
+Additional Reason Required for Other Closure")
+
+This is indicating that at this step in the sequence, the listed business rules are being implemented. Stick exactly to this multi-line format.
+
+Link the rule to the sequence step it is most relevant to. If multiple rules are relevant to a single step, list them all in the note for that step.
+
+Hints
+* Respond as if you are responding to a program i.e. leave out any code block formatting.
+* Don't change any of the content from the original sequence description except to add the rule references. Everything else should remain exactly the same including headings and other existing notes.
+* Do not put any special characters in the output.
